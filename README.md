@@ -11,5 +11,5 @@ mkdir build && cd build && cmake ../ && cmake --build .
 ```
 Run the tests
 ```
-./build/pool_party_tests
+./pool_party_tests
 ```

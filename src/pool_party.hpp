@@ -69,7 +69,7 @@ template <size_t PoolSize = 0> class thread_pool {
     thread_pool& operator=(thread_pool&&) = delete;
 
     void start() {
-        std::unique_lock lk(start_up_lock_);
+        std::unique_lock lk(thread_pool_lock);
         if (is_running_)
             return;
         threads_ = std::vector<std::jthread>(num_threads_);
@@ -77,12 +77,11 @@ template <size_t PoolSize = 0> class thread_pool {
             threads_[i] = std::jthread{&thread_pool::worker_task, this, i};
         }
         is_running_ = true;
-        lk.unlock();
         queue_cv_.notify_all();
     }
 
     void stop() {
-        std::unique_lock lk(shutdown_lock_);
+        std::unique_lock lk(thread_pool_lock);
         if (threads_.size() == 0)
             return;
         shutting_down_ = true;
@@ -151,8 +150,7 @@ template <size_t PoolSize = 0> class thread_pool {
     std::vector<std::jthread> threads_;
     std::atomic<bool> shutting_down_ = false;
     std::atomic<bool> is_running_ = false;
-    std::mutex shutdown_lock_;
-    std::mutex start_up_lock_;
+    std::mutex thread_pool_lock;
     std::queue<movable_callable> task_queue_;
     std::mutex queue_lock_;
     std::condition_variable queue_cv_;

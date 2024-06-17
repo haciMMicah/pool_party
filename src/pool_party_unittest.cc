@@ -23,12 +23,22 @@ TEST(ThreadPoolTests, TestStop) {
     EXPECT_EQ(pool.num_threads(), std::thread::hardware_concurrency());
     EXPECT_EQ(pool.submit([] { return 42; }).get(), 42);
     pool.stop();
-    EXPECT_TRUE(true);
 }
+
 TEST(ThreadPoolTests, TestConstructors) {
     pool_party::thread_pool pool;
     pool.start();
     EXPECT_EQ(pool.num_threads(), std::thread::hardware_concurrency());
+}
+
+TEST(ThreadPoolTests, TestRestart) {
+    pool_party::thread_pool pool;
+    pool.start();
+    EXPECT_EQ(pool.submit([] { return 42; }).get(), 42);
+    pool.stop();
+    auto fut1 = pool.submit([] { return 42; });
+    pool.start();
+    EXPECT_EQ(fut1.get(), 42);
 }
 
 TEST(ThreadPoolTests, TestSubmit) {

@@ -15,6 +15,7 @@
 namespace pool_party {
 
 using size_t = std::size_t;
+
 // This class is needed to store generic callables that are not copyable due to
 // move-only semantics for their captures. The class is a type-erased,
 // movable-only generic callable.
@@ -63,34 +64,41 @@ template <size_t PoolSize = 0> class thread_pool {
     ~thread_pool() { stop(); }
 
     thread_pool(const thread_pool&) = delete;
-    thread_pool(thread_pool&&) = default;
-
+    thread_pool(thread_pool&&) = delete;
     thread_pool& operator=(const thread_pool&) = delete;
-    thread_pool& operator=(thread_pool&&) = default;
+    thread_pool& operator=(thread_pool&&) = delete;
 
     void start() {
+        std::unique_lock lk(start_up_lock_);
+        if (is_running_)
+            return;
+        threads_ = std::vector<std::jthread>(num_threads_);
         for (size_t i = 0; i < num_threads_; i++) {
             threads_[i] = std::jthread{&thread_pool::worker_task, this, i};
         }
+        is_running_ = true;
+        lk.unlock();
+        queue_cv_.notify_all();
     }
 
     void stop() {
-        {
-            // We need to lock for this test and set even though shutting_down_
-            // is atomic because we only want one call to stop() to begin the
-            // shutdown process
-            std::lock_guard lk(shutdown_lock_);
-            if (shutting_down_)
-                return;
-            shutting_down_ = true;
-        }
+        std::unique_lock lk(shutdown_lock_);
+        if (threads_.size() == 0)
+            return;
+        shutting_down_ = true;
         queue_cv_.notify_all();
         for (auto& thread : threads_) {
             thread.join();
         }
+        threads_.clear();
+        shutting_down_ = false;
+        is_running_ = false;
+        return;
     }
 
     size_t num_threads() const { return num_threads_; }
+
+    bool is_running() const { return is_running_; }
 
     template <typename Callable, typename... Args,
               typename ReturnType = std::invoke_result_t<Callable, Args...>>
@@ -142,7 +150,9 @@ template <size_t PoolSize = 0> class thread_pool {
     size_t num_threads_;
     std::vector<std::jthread> threads_;
     std::atomic<bool> shutting_down_ = false;
+    std::atomic<bool> is_running_ = false;
     std::mutex shutdown_lock_;
+    std::mutex start_up_lock_;
     std::queue<movable_callable> task_queue_;
     std::mutex queue_lock_;
     std::condition_variable queue_cv_;

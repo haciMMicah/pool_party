@@ -1,0 +1,10 @@
+Checks: >
+    concurrency-*,
+    cppcoreguidelines-*,
+    -cppcoreguidelines-missing-std-forward,
+    modernize-*,
+    -modernize-use-trailing-return-type,
+    performance-*,
+    portability-*,
+    readability-*,
+HeaderFilterRegex: .*

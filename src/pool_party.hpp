@@ -54,12 +54,13 @@ class movable_callable {
     void operator()() { impl_->call(); }
 }; // class movable_callable
 
-template <size_t PoolSize = 0> class thread_pool {
+class thread_pool {
   public:
     explicit thread_pool()
-        : num_threads_(PoolSize > 0 ? PoolSize
-                                    : std::thread::hardware_concurrency()),
-          threads_(num_threads_) {}
+        : threads_(std::thread::hardware_concurrency()),
+          num_threads_(std::thread::hardware_concurrency()) {}
+    explicit thread_pool(size_t num_threads)
+        : threads_(num_threads), num_threads_(num_threads) {}
 
     ~thread_pool() { stop(); }
 
@@ -69,22 +70,38 @@ template <size_t PoolSize = 0> class thread_pool {
     thread_pool& operator=(thread_pool&&) = delete;
 
     void start() {
-        std::unique_lock lk(thread_pool_lock);
+        // Double check lock to avoid needing to lock if the threads are already
+        // running
         if (is_running_)
             return;
+        std::unique_lock lk(thread_pool_lock_);
+
+        if (is_running_)
+            return;
+
+        std::unique_lock q_lk(queue_lock_);
+
         threads_ = std::vector<std::jthread>(num_threads_);
         for (size_t i = 0; i < num_threads_; i++) {
             threads_[i] = std::jthread{&thread_pool::worker_task, this, i};
         }
         is_running_ = true;
-        queue_cv_.notify_all();
     }
 
     void stop() {
-        std::unique_lock lk(thread_pool_lock);
-        if (threads_.size() == 0)
+        // Double check lock to avoid needing to lock if the threads are already
+        // running
+        if (!is_running_)
             return;
+        std::unique_lock lk(thread_pool_lock_);
+
+        if (!is_running_)
+            return;
+
+        std::unique_lock q_lk(queue_lock_);
         shutting_down_ = true;
+        q_lk.unlock();
+
         queue_cv_.notify_all();
         for (auto& thread : threads_) {
             thread.join();
@@ -146,14 +163,16 @@ template <size_t PoolSize = 0> class thread_pool {
         }
     }
 
-    size_t num_threads_;
-    std::vector<std::jthread> threads_;
-    std::atomic<bool> shutting_down_ = false;
-    std::atomic<bool> is_running_ = false;
-    std::mutex thread_pool_lock;
-    std::queue<movable_callable> task_queue_;
-    std::mutex queue_lock_;
     std::condition_variable queue_cv_;
+    std::mutex queue_lock_;
+    std::mutex thread_pool_lock_;
+    std::queue<movable_callable> task_queue_;
+    std::vector<std::jthread> threads_;
+    size_t num_threads_;
+
+    // atomic so it can be read outside of thread_pool_lock
+    std::atomic<bool> is_running_ = false;
+    bool shutting_down_ = false;
 }; // class thread_pool
 
 } // namespace pool_party

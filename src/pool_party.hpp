@@ -79,8 +79,6 @@ class thread_pool {
         if (is_running_)
             return;
 
-        std::unique_lock q_lk(queue_lock_);
-
         threads_ = std::vector<std::jthread>(num_threads_);
         for (size_t i = 0; i < num_threads_; i++) {
             threads_[i] = std::jthread{&thread_pool::worker_task, this, i};

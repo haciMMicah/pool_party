@@ -1,11 +1,10 @@
 #include "pool_party.hpp"
 
 #include <gtest/gtest.h>
-#include <ranges>
 
 namespace {
 int free_func() { return 42; }
-int free_funct_with_args(int arg) { return arg; }
+int free_func_with_args(int arg) { return arg; }
 } // namespace
 
 class ThreadPoolTestWithParam : public testing::TestWithParam<std::size_t> {};
@@ -24,13 +23,11 @@ TEST(ThreadPoolTest, TestConstructors) {
 }
 
 TEST_P(ThreadPoolTestWithParam, TestStart) {
-    // TODO: This test is garbage, should come up with a better way to test
-    // start()
-    using namespace std::chrono_literals;
     pool_party::thread_pool pool{GetParam()};
     auto fut1 = pool.submit([] { return 42; });
-    EXPECT_EQ(fut1.wait_for(1s), std::future_status::timeout);
+    EXPECT_FALSE(pool.is_running());
     pool.start();
+    EXPECT_TRUE(pool.is_running());
     EXPECT_EQ(fut1.get(), 42);
 }
 
@@ -68,7 +65,7 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
     // Test submitting member functions
     struct test_struct {
         int bar = 42;
-        int foo() { return bar; }
+        int foo() const { return bar; }
     };
 
     test_struct struct_test;
@@ -77,7 +74,7 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
 
     // Test submitting free functions
     auto fut4 = pool.submit(&free_func);
-    auto fut5 = pool.submit(&free_funct_with_args, 43);
+    auto fut5 = pool.submit(&free_func_with_args, 43);
     EXPECT_EQ(fut4.get(), 42);
     EXPECT_EQ(fut5.get(), 43);
 }

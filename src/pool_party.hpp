@@ -149,6 +149,46 @@ class thread_pool {
         return task_future;
     }
 
+    template <typename Callable, typename CallbackClosure, typename... Args,
+              typename ReturnType = std::invoke_result_t<Callable, Args...>>
+    void submit_with_callback(Callable&& task, CallbackClosure&& callback,
+                              Args&&... task_args) {
+        std::promise<ReturnType> task_promise;
+        std::future<ReturnType> task_future = task_promise.get_future();
+        std::unique_lock q_lock(queue_lock_);
+        // Call callback with the result of the passed in task if the
+        // callback closure signature allows it
+        if constexpr (!std::is_same_v<ReturnType, void> &&
+                      std::is_invocable_v<std::decay_t<CallbackClosure>,
+                                          std::decay_t<ReturnType>>) {
+
+            task_queue_.emplace(
+                [task = std::forward<Callable>(task),
+                 callback = std::forward<CallbackClosure>(callback),
+                 ... task_args = std::forward<Args>(task_args)]() mutable {
+                    std::invoke(std::forward<CallbackClosure>(callback),
+                                std::invoke(std::forward<Callable>(task),
+                                            std::forward<Args>(task_args)...));
+                });
+
+        } else { // Otherwise just invoke the callback after invoking the
+                 // Callable
+            static_assert(std::is_invocable_v<std::decay_t<CallbackClosure>>,
+                          "CallbackClosure must be invocable.");
+            task_queue_.emplace(
+                [task = std::forward<Callable>(task),
+                 ... task_args = std::forward<Args>(task_args),
+                 callback = std::forward<CallbackClosure>(callback)]() mutable {
+                    std::invoke(std::forward<Callable>(task),
+                                std::forward<Args>(task_args)...);
+                    std::invoke(std::forward<CallbackClosure>(callback));
+                });
+        }
+
+        q_lock.unlock();
+        queue_cv_.notify_one();
+    }
+
   private:
     // Taking the stop_token by const& is fine here because jthread's
     // constructor returns a temporary by value so it gets copied anyways.

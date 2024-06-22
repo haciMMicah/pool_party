@@ -22,6 +22,52 @@ TEST(ThreadPoolTest, TestConstructors) {
     EXPECT_EQ(pool2.num_threads(), 2);
 }
 
+TEST(ThreadPoolTest, TestSubmitWithCallback) {
+    // Test with rvalue lambdas with args and task return value
+    pool_party::thread_pool pool{};
+    pool.start();
+    std::promise<int> promise{};
+    std::future<int> task_return_value = promise.get_future();
+    pool.submit_with_callback(
+        [](int task_arg_value) mutable { return task_arg_value * 2; },
+        [promise = std::move(promise)](int returned_value) mutable {
+            promise.set_value(returned_value);
+        },
+        42);
+    EXPECT_EQ(task_return_value.get(), 42 * 2);
+
+    // Test with moving lvalue lambdas with args and task return value
+    std::promise<int> promise2{};
+    std::future<int> task_return_value2 = promise2.get_future();
+    auto task_lambda = [](int task_arg_value) mutable {
+        return task_arg_value * 2;
+    };
+    auto callback_lambda =
+        [promise = std::move(promise2)](int returned_value) mutable {
+            promise.set_value(returned_value);
+        };
+    pool.submit_with_callback(std::move(task_lambda),
+                              std::move(callback_lambda), 42);
+    EXPECT_EQ(task_return_value2.get(), 42 * 2);
+
+    // Test with rvalue lambdas without args or return values
+    std::promise<bool> task_called_promise;
+    std::future<bool> task_called_fut = task_called_promise.get_future();
+    std::promise<bool> callback_called_promise{};
+    std::future<bool> callback_called_fut =
+        callback_called_promise.get_future();
+    pool.submit_with_callback(
+        [task_called_promise = std::move(task_called_promise)]() mutable {
+            task_called_promise.set_value(true);
+        },
+        [callback_called_promise =
+             std::move(callback_called_promise)]() mutable {
+            callback_called_promise.set_value(true);
+        });
+    EXPECT_EQ(task_called_fut.get(), true);
+    EXPECT_EQ(callback_called_fut.get(), true);
+}
+
 TEST_P(ThreadPoolTestWithParam, TestStart) {
     pool_party::thread_pool pool{GetParam()};
     auto fut1 = pool.submit([] { return 42; });

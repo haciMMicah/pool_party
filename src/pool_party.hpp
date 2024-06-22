@@ -89,7 +89,8 @@ class thread_pool {
 
         threads_ = std::vector<std::jthread>(num_threads_);
         for (size_t i = 0; i < num_threads_; i++) {
-            threads_[i] = std::jthread{&thread_pool::worker_task, this, i};
+            threads_[i] =
+                std::jthread{std::bind_front(&thread_pool::worker_task, this)};
         }
         is_running_ = true;
     }
@@ -106,16 +107,11 @@ class thread_pool {
             return;
         }
 
-        std::unique_lock q_lock(queue_lock_);
-        shutting_down_ = true;
-        q_lock.unlock();
-
-        queue_cv_.notify_all();
         for (auto& thread : threads_) {
+            thread.request_stop();
             thread.join();
         }
         threads_.clear();
-        shutting_down_ = false;
         is_running_ = false;
     }
 
@@ -154,14 +150,15 @@ class thread_pool {
     }
 
   private:
-    void worker_task(size_t thread_num) {
+    // Taking the stop_token by const& is fine here because jthread's
+    // constructor returns a temporary by value so it gets copied anyways.
+    void worker_task(const std::stop_token& stoken) {
         while (true) {
             std::unique_lock q_lock(queue_lock_);
-            queue_cv_.wait(q_lock, [this] {
-                return shutting_down_ || !task_queue_.empty();
-            });
+            queue_cv_.wait(q_lock, stoken,
+                           [this] { return !task_queue_.empty(); });
 
-            if (shutting_down_) {
+            if (stoken.stop_requested()) {
                 return;
             }
 
@@ -171,7 +168,7 @@ class thread_pool {
         }
     }
 
-    std::condition_variable queue_cv_;
+    std::condition_variable_any queue_cv_;
     std::mutex queue_lock_;
     std::mutex thread_pool_lock_;
     std::queue<movable_callable> task_queue_;
@@ -180,7 +177,6 @@ class thread_pool {
 
     // atomic so it can be read outside of thread_pool_lock
     std::atomic<bool> is_running_ = false;
-    bool shutting_down_ = false;
 }; // class thread_pool
 
 } // namespace pool_party

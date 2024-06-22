@@ -3,6 +3,7 @@
 
 #include <condition_variable>
 #include <cuchar>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -131,18 +132,35 @@ class thread_pool {
                 [task_promise = std::move(task_promise),
                  task = std::forward<Callable>(task),
                  ... args = std::forward<Args>(args)]() mutable {
-                    std::invoke(std::forward<Callable>(task),
-                                std::forward<Args>(args)...);
-                    task_promise.set_value();
+#ifdef __cpp_exceptions
+                    try {
+#endif
+                        std::invoke(std::forward<Callable>(task),
+                                    std::forward<Args>(args)...);
+                        task_promise.set_value();
+#ifdef __cpp_exceptions
+                    } catch (...) {
+                        task_promise.set_exception(std::current_exception());
+                    }
+#endif
                 });
         } else {
-            task_queue_.emplace([task_promise = std::move(task_promise),
-                                 task = std::forward<Callable>(task),
-                                 ... args =
-                                     std::forward<Args>(args)]() mutable {
-                task_promise.set_value(std::invoke(
-                    std::forward<Callable>(task), std::forward<Args>(args)...));
-            });
+            task_queue_.emplace(
+                [task_promise = std::move(task_promise),
+                 task = std::forward<Callable>(task),
+                 ... args = std::forward<Args>(args)]() mutable {
+#ifdef __cpp_exceptions
+                    try {
+#endif
+                        task_promise.set_value(
+                            std::invoke(std::forward<Callable>(task),
+                                        std::forward<Args>(args)...));
+#ifdef __cpp_exceptions
+                    } catch (...) {
+                        task_promise.set_exception(std::current_exception());
+                    }
+#endif
+                });
         }
         q_lock.unlock();
         queue_cv_.notify_one();

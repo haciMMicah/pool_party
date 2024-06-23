@@ -1,6 +1,8 @@
 #include "pool_party.hpp"
 
+#include <exception>
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 namespace {
 int free_func() { return 42; }
@@ -22,8 +24,50 @@ TEST(ThreadPoolTest, TestConstructors) {
     EXPECT_EQ(pool2.num_threads(), 2);
 }
 
+TEST(ThreadPoolTest, TestSubmitSetsExceptions) {
+    pool_party::thread_pool pool{};
+    pool.start();
+    struct TestException : public std::exception {};
+    auto exception_fut = pool.submit([] { throw TestException(); });
+
+    EXPECT_THROW({ exception_fut.get(); }, TestException);
+}
+
+TEST(ThreadPoolTest, TestSubmitDetached) {
+    // Test with rvalue lambdas with args and task return value.
+    pool_party::thread_pool pool{};
+    pool.start();
+    std::promise<int> promise{};
+    std::future<int> task_return_value = promise.get_future();
+    pool.submit_detached(
+        [promise = std::move(promise)](int returned_value) mutable {
+            promise.set_value(returned_value);
+        },
+        42);
+    EXPECT_EQ(task_return_value.get(), 42);
+
+    // Test with moving lvalue lambdas with args.
+    std::promise<int> promise2{};
+    std::future<int> task_return_value2 = promise2.get_future();
+    auto task_lambda = [promise =
+                            std::move(promise2)](int passed_in_value) mutable {
+        promise.set_value(passed_in_value);
+    };
+    pool.submit_detached(std::move(task_lambda), 42);
+    EXPECT_EQ(task_return_value2.get(), 42);
+
+    // Test with rvalue lambdas without args or return values.
+    std::promise<bool> task_called_promise;
+    std::future<bool> task_called_fut = task_called_promise.get_future();
+    pool.submit_detached(
+        [task_called_promise = std::move(task_called_promise)]() mutable {
+            task_called_promise.set_value(true);
+        });
+    EXPECT_EQ(task_called_fut.get(), true);
+}
+
 TEST(ThreadPoolTest, TestSubmitWithCallback) {
-    // Test with rvalue lambdas with args and task return value
+    // Test with rvalue lambdas with args and task return value.
     pool_party::thread_pool pool{};
     pool.start();
     std::promise<int> promise{};
@@ -36,7 +80,7 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
         42);
     EXPECT_EQ(task_return_value.get(), 42 * 2);
 
-    // Test with moving lvalue lambdas with args and task return value
+    // Test with moving lvalue lambdas with args and task return value.
     std::promise<int> promise2{};
     std::future<int> task_return_value2 = promise2.get_future();
     auto task_lambda = [](int task_arg_value) mutable {
@@ -50,7 +94,7 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
                               std::move(callback_lambda), 42);
     EXPECT_EQ(task_return_value2.get(), 42 * 2);
 
-    // Test with rvalue lambdas without args or return values
+    // Test with rvalue lambdas without args or return values.
     std::promise<bool> task_called_promise;
     std::future<bool> task_called_fut = task_called_promise.get_future();
     std::promise<bool> callback_called_promise{};
@@ -100,7 +144,7 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
     pool_party::thread_pool pool{GetParam()};
     pool.start();
 
-    // Test submitting lambdas
+    // Test submitting lambdas.
     auto task = [] { return 1; };
     auto task2 = [](int i) { return i; };
     auto fut1 = pool.submit(task);
@@ -108,7 +152,7 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
     EXPECT_EQ(fut1.get(), 1);
     EXPECT_EQ(fut2.get(), 2);
 
-    // Test submitting member functions
+    // Test submitting member functions.
     struct test_struct {
         int bar = 42;
         int foo() const { return bar; }
@@ -118,7 +162,7 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
     auto fut3 = pool.submit(&test_struct::foo, &struct_test);
     EXPECT_EQ(fut3.get(), 42);
 
-    // Test submitting free functions
+    // Test submitting free functions.
     auto fut4 = pool.submit(&free_func);
     auto fut5 = pool.submit(&free_func_with_args, 43);
     EXPECT_EQ(fut4.get(), 42);

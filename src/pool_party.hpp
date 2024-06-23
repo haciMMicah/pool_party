@@ -78,7 +78,7 @@ class thread_pool {
 
     void start() {
         // Double check lock to avoid needing to lock if the threads are already
-        // running
+        // running.
         if (is_running_) {
             return;
         }
@@ -98,7 +98,7 @@ class thread_pool {
 
     void stop() {
         // Double check lock to avoid needing to lock if the threads are already
-        // running
+        // running.
         if (!is_running_) {
             return;
         }
@@ -120,6 +120,24 @@ class thread_pool {
 
     [[nodiscard]] bool is_running() const { return is_running_; }
 
+    template <typename Callable, typename... Args>
+        requires std::is_invocable_v<std::decay_t<Callable>,
+                                     std::decay_t<Args>...>
+    void submit_detached(Callable&& task, Args&&... args) {
+        std::unique_lock q_lock(queue_lock_);
+        task_queue_.emplace([task = std::forward<Callable>(task),
+                             ... args = std::forward<Args>(args)]() mutable {
+            try {
+                std::invoke(std::forward<Callable>(task),
+                            std::forward<Args>(args)...);
+            } catch (...) {
+                // TODO: Maybe call a user set callback to foward the exception.
+            }
+        });
+        q_lock.unlock();
+        queue_cv_.notify_one();
+    }
+
     template <typename Callable, typename... Args,
               typename ReturnType = std::invoke_result_t<Callable, Args...>>
     [[nodiscard]] auto submit(Callable&& task, Args&&... args) {
@@ -132,34 +150,26 @@ class thread_pool {
                 [task_promise = std::move(task_promise),
                  task = std::forward<Callable>(task),
                  ... args = std::forward<Args>(args)]() mutable {
-#ifdef __cpp_exceptions
                     try {
-#endif
                         std::invoke(std::forward<Callable>(task),
                                     std::forward<Args>(args)...);
                         task_promise.set_value();
-#ifdef __cpp_exceptions
                     } catch (...) {
                         task_promise.set_exception(std::current_exception());
                     }
-#endif
                 });
         } else {
             task_queue_.emplace(
                 [task_promise = std::move(task_promise),
                  task = std::forward<Callable>(task),
                  ... args = std::forward<Args>(args)]() mutable {
-#ifdef __cpp_exceptions
                     try {
-#endif
                         task_promise.set_value(
                             std::invoke(std::forward<Callable>(task),
                                         std::forward<Args>(args)...));
-#ifdef __cpp_exceptions
                     } catch (...) {
                         task_promise.set_exception(std::current_exception());
                     }
-#endif
                 });
         }
         q_lock.unlock();
@@ -175,7 +185,7 @@ class thread_pool {
         std::future<ReturnType> task_future = task_promise.get_future();
         std::unique_lock q_lock(queue_lock_);
         // Call callback with the result of the passed in task if the
-        // callback closure signature allows it
+        // callback closure signature allows it.
         if constexpr (!std::is_same_v<ReturnType, void> &&
                       std::is_invocable_v<std::decay_t<CallbackClosure>,
                                           std::decay_t<ReturnType>>) {
@@ -190,7 +200,7 @@ class thread_pool {
                 });
 
         } else { // Otherwise just invoke the callback after invoking the
-                 // Callable
+                 // Callable.
             static_assert(std::is_invocable_v<std::decay_t<CallbackClosure>>,
                           "CallbackClosure must be invocable.");
             task_queue_.emplace(
@@ -222,6 +232,7 @@ class thread_pool {
 
             auto task = std::move(task_queue_.front());
             task_queue_.pop();
+            q_lock.unlock();
             task();
         }
     }
@@ -233,9 +244,9 @@ class thread_pool {
     std::vector<std::jthread> threads_;
     size_t num_threads_;
 
-    // atomic so it can be read outside of thread_pool_lock
+    // atomic so it can be read outside of thread_pool_lock.
     std::atomic<bool> is_running_ = false;
-}; // class thread_pool
+}; // namespace pool_party
 
 } // namespace pool_party
 

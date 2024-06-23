@@ -116,7 +116,10 @@ class thread_pool {
         is_running_ = false;
     }
 
-    [[nodiscard]] size_t num_threads() const { return num_threads_; }
+    [[nodiscard]] size_t num_threads() const {
+        std::unique_lock pool_lock(thread_pool_lock_);
+        return num_threads_;
+    }
 
     [[nodiscard]] bool is_running() const { return is_running_; }
 
@@ -238,8 +241,8 @@ class thread_pool {
     }
 
     std::condition_variable_any queue_cv_;
-    std::mutex queue_lock_;
-    std::mutex thread_pool_lock_;
+    mutable std::mutex queue_lock_;
+    mutable std::mutex thread_pool_lock_;
     std::queue<movable_callable> task_queue_;
     std::vector<std::jthread> threads_;
     size_t num_threads_;
@@ -251,3 +254,4 @@ class thread_pool {
 } // namespace pool_party
 
 #endif // POOL_PARTY_HPP
+       // o

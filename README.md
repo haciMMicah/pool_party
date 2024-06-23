@@ -48,17 +48,17 @@ auto future = pool.submit([]{
 })
 future.wait();
 
-// Submit a job with a callback to signal it's completion
+// Submit a job with a callback to signal its completion
 pool.submit_with_callback(
   []{ std::cout << "Hello, "; },
   []{ std::cout << "World!\n"; });
 
-// Submit a job that passes it's return value to a callback
+// Submit a job that passes its return value to a callback
 pool.submit_with_callback(
   []{ std::cout << "Hello, "; return 42; },
   [](int num){ std::cout << "World! " << num << "\n"; });
 
-// Submit a job that takes arguments that passes it's return value to a callback
+// Submit a job that takes arguments that passes its return value to a callback
 pool.submit_with_callback(
   [](int num_to_return){ std::cout << "Hello, "; return num_to_return; },
   [](int num){ std::cout << "World! " << num << "\n"; },

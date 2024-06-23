@@ -25,6 +25,8 @@ target_link_libraries(
     pool_party_tests
     GTest::gtest_main
 )
+add_compile_options(-fsanitize=address)
+add_link_options(-fsanitize=address)
 
 include(GoogleTest)
 gtest_discover_tests(pool_party_tests)

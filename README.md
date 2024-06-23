@@ -32,7 +32,7 @@ pool.stop();
 pool.num_threads();
 pool.is_running();
 ```
-## Submitting Jobs to the Thread Pool
+### Submitting Jobs to the Thread Pool
 ```cpp
 pool_party::thread_pool pool{};
 pool.start();

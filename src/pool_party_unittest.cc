@@ -171,7 +171,6 @@ TEST_P(ThreadPoolTestWithParam, TestSubmit) {
 
 TEST_P(ThreadPoolTestWithParam, TestTasksPerThread) {
     pool_party::thread_pool pool{GetParam()};
-    pool.start();
 
     std::size_t num_threads = GetParam();
     std::size_t expected_total = 0;
@@ -183,6 +182,7 @@ TEST_P(ThreadPoolTestWithParam, TestTasksPerThread) {
         expected_total += task_num;
     }
 
+    pool.start();
     std::size_t actual_total = 0;
     for (auto& fut : futures) {
         actual_total += fut.get();
@@ -193,7 +193,6 @@ TEST_P(ThreadPoolTestWithParam, TestTasksPerThread) {
 
 TEST_P(ThreadPoolTestWithParam, TestManyTasks) {
     pool_party::thread_pool pool{GetParam()};
-    pool.start();
 
     std::size_t num_threads = GetParam();
     std::vector<std::future<std::size_t>> futures;
@@ -204,6 +203,7 @@ TEST_P(ThreadPoolTestWithParam, TestManyTasks) {
             pool.submit([] { return static_cast<std::size_t>(1); }));
     }
 
+    pool.start();
     std::size_t actual_total = 0;
     for (auto& fut : futures) {
         actual_total += fut.get();

@@ -8,7 +8,9 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
+#include <stop_token>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -61,6 +63,52 @@ class movable_callable {
     void operator()() { impl_->call(); }
 }; // class movable_callable
 
+template <typename T> class simple_thread_safe_queue {
+  public:
+    void push(T value) {
+        std::unique_lock lock(queue_lock_);
+        queue_.push(std::move(value));
+        lock.unlock();
+        queue_cv_.notify_one();
+    }
+
+    template <typename... Args> decltype(auto) emplace(Args&&... args) {
+        std::unique_lock lock(queue_lock_);
+        queue_.emplace(std::forward<Args>(args)...);
+        lock.unlock();
+        queue_cv_.notify_one();
+    }
+
+    std::optional<T> wait_and_pop(std::stop_token stoken) {
+        std::unique_lock lock(queue_lock_);
+        queue_cv_.wait(lock, stoken, [this] { return !queue_.empty(); });
+
+        if (stoken.stop_requested()) {
+            return std::nullopt;
+        }
+
+        auto front = std::move(queue_.front());
+        queue_.pop();
+        return front;
+    }
+
+    std::size_t size() const {
+        std::lock_guard lock(queue_lock_);
+        return queue_.size();
+    }
+
+    bool empty() const {
+        std::lock_guard lock(queue_lock_);
+        return queue_.empty();
+    }
+
+  private:
+    mutable std::mutex queue_lock_;
+    std::queue<T> queue_;
+    std::condition_variable_any queue_cv_;
+};
+
+template <typename Container = simple_thread_safe_queue<movable_callable>>
 class thread_pool {
   public:
     explicit thread_pool()
@@ -127,7 +175,6 @@ class thread_pool {
         requires std::is_invocable_v<std::decay_t<Callable>,
                                      std::decay_t<Args>...>
     void submit_detached(Callable&& task, Args&&... args) {
-        std::unique_lock q_lock(queue_lock_);
         task_queue_.emplace([task = std::forward<Callable>(task),
                              ... args = std::forward<Args>(args)]() mutable {
             try {
@@ -137,8 +184,6 @@ class thread_pool {
                 // TODO: Maybe call a user set callback to foward the exception.
             }
         });
-        q_lock.unlock();
-        queue_cv_.notify_one();
     }
 
     template <typename Callable, typename... Args,
@@ -146,7 +191,6 @@ class thread_pool {
     [[nodiscard]] auto submit(Callable&& task, Args&&... args) {
         std::promise<ReturnType> task_promise;
         std::future<ReturnType> task_future = task_promise.get_future();
-        std::unique_lock q_lock(queue_lock_);
         if constexpr (std::is_same_v<ReturnType, void>) {
 
             task_queue_.emplace(
@@ -175,8 +219,6 @@ class thread_pool {
                     }
                 });
         }
-        q_lock.unlock();
-        queue_cv_.notify_one();
         return task_future;
     }
 
@@ -186,7 +228,6 @@ class thread_pool {
                               Args&&... task_args) {
         std::promise<ReturnType> task_promise;
         std::future<ReturnType> task_future = task_promise.get_future();
-        std::unique_lock q_lock(queue_lock_);
         // Call callback with the result of the passed in task if the
         // callback closure signature allows it.
         if constexpr (!std::is_same_v<ReturnType, void> &&
@@ -215,9 +256,6 @@ class thread_pool {
                     std::invoke(std::forward<CallbackClosure>(callback));
                 });
         }
-
-        q_lock.unlock();
-        queue_cv_.notify_one();
     }
 
   private:
@@ -225,25 +263,18 @@ class thread_pool {
     // constructor returns a temporary by value so it gets copied anyways.
     void worker_task(const std::stop_token& stoken) {
         while (true) {
-            std::unique_lock q_lock(queue_lock_);
-            queue_cv_.wait(q_lock, stoken,
-                           [this] { return !task_queue_.empty(); });
-
-            if (stoken.stop_requested()) {
-                return;
+            auto task = task_queue_.wait_and_pop(stoken);
+            if (task) {
+                task.value()();
+            } else {
+                break;
             }
-
-            auto task = std::move(task_queue_.front());
-            task_queue_.pop();
-            q_lock.unlock();
-            task();
         }
     }
 
     std::condition_variable_any queue_cv_;
-    mutable std::mutex queue_lock_;
     mutable std::mutex thread_pool_lock_;
-    std::queue<movable_callable> task_queue_;
+    Container task_queue_;
     std::vector<std::jthread> threads_;
     size_t num_threads_;
 

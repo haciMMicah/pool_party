@@ -1,6 +1,7 @@
 #ifndef POOL_PARTY_HPP
 #define POOL_PARTY_HPP
 
+#include <concepts>
 #include <condition_variable>
 #include <cuchar>
 #include <exception>
@@ -63,6 +64,13 @@ class movable_callable {
     void operator()() { impl_->call(); }
 }; // class movable_callable
 
+template <typename T>
+concept not_copyable = not std::copyable<T>;
+
+template <typename F, typename... Args>
+concept move_only_invocable =
+    std::invocable<F, Args...> && std::movable<F> && not_copyable<F>;
+
 template <typename Queue>
 concept thread_pool_queue =
     requires { typename Queue::value_type; } &&
@@ -115,7 +123,7 @@ template <typename T> class simple_thread_safe_queue {
     std::condition_variable_any queue_cv_;
 };
 
-template <std::movable CallableWrapper = movable_callable,
+template <move_only_invocable CallableWrapper = movable_callable,
           thread_pool_queue Container =
               simple_thread_safe_queue<CallableWrapper>>
 class thread_pool {

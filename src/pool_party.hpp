@@ -21,7 +21,7 @@ using size_t = std::size_t;
 
 // This class is needed to store generic callables that are not copyable due to
 // move-only semantics for their captures. The class is a type-erased,
-// movable-only generic callable.
+// movable-only generic callable that takes no arguments and returns void.
 class movable_callable {
   private:
     struct impl_base {
@@ -63,23 +63,30 @@ class movable_callable {
     void operator()() { impl_->call(); }
 }; // class movable_callable
 
+template <typename Queue>
+concept thread_pool_queue =
+    requires { typename Queue::value_type; } &&
+    requires(Queue queue, const Queue c_queue,
+             typename Queue::value_type&& value) {
+        { queue.push(std::move(value)) } -> std::same_as<void>;
+        {
+            queue.pop(std::stop_token())
+        } -> std::same_as<std::optional<typename Queue::value_type>>;
+        { c_queue.size() } -> std::convertible_to<std::size_t>;
+        { c_queue.empty() } -> std::same_as<bool>;
+    };
+
 template <typename T> class simple_thread_safe_queue {
   public:
-    void push(T value) {
+    using value_type = T;
+    void push(value_type&& value) {
         std::unique_lock lock(queue_lock_);
-        queue_.push(std::move(value));
+        queue_.push(std::forward<value_type>(value));
         lock.unlock();
         queue_cv_.notify_one();
     }
 
-    template <typename... Args> decltype(auto) emplace(Args&&... args) {
-        std::unique_lock lock(queue_lock_);
-        queue_.emplace(std::forward<Args>(args)...);
-        lock.unlock();
-        queue_cv_.notify_one();
-    }
-
-    std::optional<T> wait_and_pop(std::stop_token stoken) {
+    std::optional<value_type> pop(std::stop_token stoken) {
         std::unique_lock lock(queue_lock_);
         queue_cv_.wait(lock, stoken, [this] { return !queue_.empty(); });
 
@@ -104,14 +111,16 @@ template <typename T> class simple_thread_safe_queue {
 
   private:
     mutable std::mutex queue_lock_;
-    std::queue<T> queue_;
+    std::queue<value_type> queue_;
     std::condition_variable_any queue_cv_;
 };
 
-template <typename Container = simple_thread_safe_queue<movable_callable>>
+template <std::movable CallableWrapper = movable_callable,
+          thread_pool_queue Container =
+              simple_thread_safe_queue<CallableWrapper>>
 class thread_pool {
   public:
-    explicit thread_pool()
+    thread_pool()
         : threads_(std::thread::hardware_concurrency()),
           num_threads_(std::thread::hardware_concurrency()) {}
     explicit thread_pool(size_t num_threads)
@@ -175,8 +184,8 @@ class thread_pool {
         requires std::is_invocable_v<std::decay_t<Callable>,
                                      std::decay_t<Args>...>
     void submit_detached(Callable&& task, Args&&... args) {
-        task_queue_.emplace([task = std::forward<Callable>(task),
-                             ... args = std::forward<Args>(args)]() mutable {
+        task_queue_.push([task = std::forward<Callable>(task),
+                          ... args = std::forward<Args>(args)]() mutable {
             try {
                 std::invoke(std::forward<Callable>(task),
                             std::forward<Args>(args)...);
@@ -193,31 +202,29 @@ class thread_pool {
         std::future<ReturnType> task_future = task_promise.get_future();
         if constexpr (std::is_same_v<ReturnType, void>) {
 
-            task_queue_.emplace(
-                [task_promise = std::move(task_promise),
-                 task = std::forward<Callable>(task),
-                 ... args = std::forward<Args>(args)]() mutable {
-                    try {
-                        std::invoke(std::forward<Callable>(task),
-                                    std::forward<Args>(args)...);
-                        task_promise.set_value();
-                    } catch (...) {
-                        task_promise.set_exception(std::current_exception());
-                    }
-                });
+            task_queue_.push([task_promise = std::move(task_promise),
+                              task = std::forward<Callable>(task),
+                              ... args = std::forward<Args>(args)]() mutable {
+                try {
+                    std::invoke(std::forward<Callable>(task),
+                                std::forward<Args>(args)...);
+                    task_promise.set_value();
+                } catch (...) {
+                    task_promise.set_exception(std::current_exception());
+                }
+            });
         } else {
-            task_queue_.emplace(
-                [task_promise = std::move(task_promise),
-                 task = std::forward<Callable>(task),
-                 ... args = std::forward<Args>(args)]() mutable {
-                    try {
-                        task_promise.set_value(
-                            std::invoke(std::forward<Callable>(task),
-                                        std::forward<Args>(args)...));
-                    } catch (...) {
-                        task_promise.set_exception(std::current_exception());
-                    }
-                });
+            task_queue_.push([task_promise = std::move(task_promise),
+                              task = std::forward<Callable>(task),
+                              ... args = std::forward<Args>(args)]() mutable {
+                try {
+                    task_promise.set_value(
+                        std::invoke(std::forward<Callable>(task),
+                                    std::forward<Args>(args)...));
+                } catch (...) {
+                    task_promise.set_exception(std::current_exception());
+                }
+            });
         }
         return task_future;
     }
@@ -226,15 +233,13 @@ class thread_pool {
               typename ReturnType = std::invoke_result_t<Callable, Args...>>
     void submit_with_callback(Callable&& task, CallbackClosure&& callback,
                               Args&&... task_args) {
-        std::promise<ReturnType> task_promise;
-        std::future<ReturnType> task_future = task_promise.get_future();
         // Call callback with the result of the passed in task if the
         // callback closure signature allows it.
         if constexpr (!std::is_same_v<ReturnType, void> &&
                       std::is_invocable_v<std::decay_t<CallbackClosure>,
                                           std::decay_t<ReturnType>>) {
 
-            task_queue_.emplace(
+            task_queue_.push(
                 [task = std::forward<Callable>(task),
                  callback = std::forward<CallbackClosure>(callback),
                  ... task_args = std::forward<Args>(task_args)]() mutable {
@@ -247,7 +252,7 @@ class thread_pool {
                  // Callable.
             static_assert(std::is_invocable_v<std::decay_t<CallbackClosure>>,
                           "CallbackClosure must be invocable.");
-            task_queue_.emplace(
+            task_queue_.push(
                 [task = std::forward<Callable>(task),
                  ... task_args = std::forward<Args>(task_args),
                  callback = std::forward<CallbackClosure>(callback)]() mutable {
@@ -263,7 +268,7 @@ class thread_pool {
     // constructor returns a temporary by value so it gets copied anyways.
     void worker_task(const std::stop_token& stoken) {
         while (true) {
-            auto task = task_queue_.wait_and_pop(stoken);
+            auto task = task_queue_.pop(stoken);
             if (task) {
                 task.value()();
             } else {
@@ -285,4 +290,3 @@ class thread_pool {
 } // namespace pool_party
 
 #endif // POOL_PARTY_HPP
-       // o

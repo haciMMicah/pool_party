@@ -72,7 +72,7 @@ concept thread_pool_queue =
         {
             queue.pop(std::stop_token())
         } -> std::same_as<std::optional<typename Queue::value_type>>;
-        { c_queue.size() } -> std::convertible_to<std::size_t>;
+        { c_queue.size() } -> std::convertible_to<size_t>;
         { c_queue.empty() } -> std::same_as<bool>;
     };
 
@@ -99,7 +99,7 @@ template <typename T> class simple_thread_safe_queue {
         return front;
     }
 
-    std::size_t size() const {
+    size_t size() const {
         std::lock_guard lock(queue_lock_);
         return queue_.size();
     }
@@ -285,7 +285,7 @@ class thread_pool {
 
     // atomic so it can be read outside of thread_pool_lock.
     std::atomic<bool> is_running_ = false;
-}; // namespace pool_party
+}; // class thread_pool
 
 } // namespace pool_party
 

@@ -33,6 +33,15 @@ TEST(ThreadPoolTest, TestSubmitSetsExceptions) {
     EXPECT_THROW({ exception_fut.get(); }, TestException);
 }
 
+TEST(ThreadPoolTest, TestSubmitWithCallbackSetsExceptions) {
+    pool_party::thread_pool pool{};
+    pool.start();
+    struct TestException : public std::exception {};
+    pool.submit_with_callback(
+        [] { throw TestException(); },
+        [](std::exception_ptr e_ptr) noexcept { EXPECT_TRUE(e_ptr); });
+}
+
 TEST(ThreadPoolTest, TestSubmitDetached) {
     // Test with rvalue lambdas with args and task return value.
     pool_party::thread_pool pool{};
@@ -74,7 +83,8 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
     std::future<int> task_return_value = promise.get_future();
     pool.submit_with_callback(
         [](int task_arg_value) mutable { return task_arg_value * 2; },
-        [promise = std::move(promise)](int returned_value) mutable {
+        [promise = std::move(promise)](std::exception_ptr,
+                                       int returned_value) mutable noexcept {
             promise.set_value(returned_value);
         },
         42);
@@ -87,7 +97,8 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
         return task_arg_value * 2;
     };
     auto callback_lambda =
-        [promise = std::move(promise2)](int returned_value) mutable {
+        [promise = std::move(promise2)](std::exception_ptr,
+                                        int returned_value) mutable noexcept {
             promise.set_value(returned_value);
         };
     pool.submit_with_callback(std::move(task_lambda),
@@ -104,8 +115,8 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
         [task_called_promise = std::move(task_called_promise)]() mutable {
             task_called_promise.set_value(true);
         },
-        [callback_called_promise =
-             std::move(callback_called_promise)]() mutable {
+        [callback_called_promise = std::move(callback_called_promise)](
+            std::exception_ptr) mutable noexcept {
             callback_called_promise.set_value(true);
         });
     EXPECT_EQ(task_called_fut.get(), true);

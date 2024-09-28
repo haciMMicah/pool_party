@@ -51,16 +51,16 @@ future.wait();
 // Submit a job with a callback to signal its completion
 pool.submit_with_callback(
   []{ std::cout << "Hello, "; },
-  []{ std::cout << "World!\n"; });
+  [](std::exception_ptr) noexcept { std::cout << "World!\n"; });
 
 // Submit a job that passes its return value to a callback
 pool.submit_with_callback(
   []{ std::cout << "Hello, "; return 42; },
-  [](int num){ std::cout << "World! " << num << "\n"; });
+  [](std::exception_ptr, int num) noexcept { std::cout << "World! " << num << "\n"; });
 
 // Submit a job that takes arguments that passes its return value to a callback
 pool.submit_with_callback(
   [](int num_to_return){ std::cout << "Hello, "; return num_to_return; },
-  [](int num){ std::cout << "World! " << num << "\n"; },
+  [](std::exception_ptr, int num) noexcept { std::cout << "World! " << num << "\n"; },
   42);
 ```

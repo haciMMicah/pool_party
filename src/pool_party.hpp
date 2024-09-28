@@ -239,34 +239,51 @@ class thread_pool {
 
     template <typename Callable, typename CallbackClosure, typename... Args,
               typename ReturnType = std::invoke_result_t<Callable, Args...>>
+        requires std::is_default_constructible_v<ReturnType> or
+                 std::is_same_v<ReturnType, void>
     void submit_with_callback(Callable&& task, CallbackClosure&& callback,
                               Args&&... task_args) {
         // Call callback with the result of the passed in task if the
         // callback closure signature allows it.
         if constexpr (!std::is_same_v<ReturnType, void> &&
-                      std::is_invocable_v<std::decay_t<CallbackClosure>,
-                                          std::decay_t<ReturnType>>) {
+                      std::is_nothrow_invocable_v<
+                          CallbackClosure, std::exception_ptr, ReturnType>) {
 
             task_queue_.push(
                 [task = std::forward<Callable>(task),
                  callback = std::forward<CallbackClosure>(callback),
                  ... task_args = std::forward<Args>(task_args)]() mutable {
-                    std::invoke(std::forward<CallbackClosure>(callback),
-                                std::invoke(std::forward<Callable>(task),
-                                            std::forward<Args>(task_args)...));
+                    try {
+                        auto result =
+                            std::invoke(std::forward<Callable>(task),
+                                        std::forward<Args>(task_args)...);
+                        std::invoke(std::forward<CallbackClosure>(callback),
+                                    std::exception_ptr{}, result);
+                    } catch (...) {
+                        std::invoke(std::forward<CallbackClosure>(callback),
+                                    std::current_exception(), ReturnType{});
+                    }
                 });
 
         } else { // Otherwise just invoke the callback after invoking the
                  // Callable.
-            static_assert(std::is_invocable_v<std::decay_t<CallbackClosure>>,
-                          "CallbackClosure must be invocable.");
+            static_assert(
+                std::is_nothrow_invocable_v<std::decay_t<CallbackClosure>,
+                                            std::exception_ptr>,
+                "CallbackClosure must be nothrow invocable.");
             task_queue_.push(
                 [task = std::forward<Callable>(task),
                  ... task_args = std::forward<Args>(task_args),
                  callback = std::forward<CallbackClosure>(callback)]() mutable {
-                    std::invoke(std::forward<Callable>(task),
-                                std::forward<Args>(task_args)...);
-                    std::invoke(std::forward<CallbackClosure>(callback));
+                    try {
+                        std::invoke(std::forward<Callable>(task),
+                                    std::forward<Args>(task_args)...);
+                        std::invoke(std::forward<CallbackClosure>(callback),
+                                    std::exception_ptr{});
+                    } catch (...) {
+                        std::invoke(std::forward<CallbackClosure>(callback),
+                                    std::current_exception());
+                    }
                 });
         }
     }

@@ -1,6 +1,7 @@
 #include "pool_party.hpp"
 
 #include <chrono>
+#include <exception>
 #include <format>
 #include <iostream>
 #include <string_view>
@@ -69,10 +70,11 @@ nanoseconds average_submit_with_callback_time(size_t num_threads,
         pool.start();
     }
     const auto empty_lambda = [] {};
+    const auto empty_callback = [](std::exception_ptr) noexcept {};
     timer clock;
     clock.start();
     for (size_t i = 0; i < num_submissions; i++) {
-        pool.submit_with_callback(empty_lambda, empty_lambda);
+        pool.submit_with_callback(empty_lambda, empty_callback);
     }
     clock.stop();
     return clock.duration() / num_submissions;

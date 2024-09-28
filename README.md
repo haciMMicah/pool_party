@@ -12,6 +12,7 @@ mkdir build && cd build && cmake ../ && cmake --build .
 Run the tests
 ```
 ./pool_party_tests
+./pool_party_tests_performance_tests
 ```
 ## Usage
 ### Thread Pool Creation

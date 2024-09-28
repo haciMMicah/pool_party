@@ -205,7 +205,6 @@ TEST_P(ThreadPoolTestWithParam, TestTasksPerThread) {
 TEST_P(ThreadPoolTestWithParam, TestManyTasks) {
     pool_party::thread_pool pool{GetParam()};
 
-    std::size_t num_threads = GetParam();
     std::vector<std::future<std::size_t>> futures;
     std::size_t num_tasks = 1'000'000;
     futures.reserve(num_tasks);

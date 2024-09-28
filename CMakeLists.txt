@@ -21,19 +21,24 @@ add_executable(
     pool_party_tests
     src/pool_party_unittest.cc
 )
+target_link_libraries(
+    pool_party_tests
+    GTest::gtest_main
+)
+target_compile_options(
+    pool_party_tests
+    PUBLIC
+    "-W;-Wall;-Werror;-Wpedantic;-Wextra"
+)
+
 add_executable(
     pool_party_performance_tests
     src/pool_party_performance_tests.cc
 )
-set_target_properties(
+target_compile_options(
     pool_party_performance_tests
-    PROPERTIES
-    COMPILE_FLAGS
-    "-O3"
-)
-target_link_libraries(
-    pool_party_tests
-    GTest::gtest_main
+    PUBLIC
+    "-W;-Wall;-Werror;-Wpedantic;-Wextra;-O3"
 )
 
 include(GoogleTest)

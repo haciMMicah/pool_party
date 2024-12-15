@@ -163,7 +163,7 @@ class thread_pool {
 
     void stop() {
         // Double check lock to avoid needing to lock if the threads are already
-        // running.
+        // stopped.
         if (!is_running_) {
             return;
         }

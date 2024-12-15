@@ -136,18 +136,24 @@ TEST_P(ThreadPoolTestWithParam, TestStop) {
     auto num_threads = GetParam();
     pool_party::thread_pool pool{num_threads};
     pool.start();
+    EXPECT_TRUE(pool.is_running());
     EXPECT_EQ(pool.num_threads(), num_threads);
     EXPECT_EQ(pool.submit([] { return 42; }).get(), 42);
     pool.stop();
+    EXPECT_FALSE(pool.is_running());
 }
 
 TEST_P(ThreadPoolTestWithParam, TestRestart) {
     pool_party::thread_pool pool{GetParam()};
+    EXPECT_FALSE(pool.is_running());
     pool.start();
+    EXPECT_TRUE(pool.is_running());
     EXPECT_EQ(pool.submit([] { return 42; }).get(), 42);
     pool.stop();
+    EXPECT_FALSE(pool.is_running());
     auto fut1 = pool.submit([] { return 42; });
     pool.start();
+    EXPECT_TRUE(pool.is_running());
     EXPECT_EQ(fut1.get(), 42);
 }
 

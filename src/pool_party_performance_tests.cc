@@ -14,6 +14,9 @@ using namespace pool_party;
 
 namespace {
 
+static constexpr std::size_t BUFFER_SIZE = 16UL;
+static constexpr std::size_t ALIGNMENT = 8UL;
+
 struct timer {
     time_point<high_resolution_clock> start_time;
     time_point<high_resolution_clock> stop_time;
@@ -32,7 +35,7 @@ struct timer {
 nanoseconds average_submit_detached_time(size_t num_threads,
                                          size_t num_submissions,
                                          bool submit_after_started) {
-    thread_pool pool{num_threads};
+    thread_pool<BUFFER_SIZE, ALIGNMENT> pool{num_threads};
     if (submit_after_started) {
         pool.start();
     }
@@ -48,7 +51,7 @@ nanoseconds average_submit_detached_time(size_t num_threads,
 
 nanoseconds average_submit_time(size_t num_threads, size_t num_submissions,
                                 bool submit_after_started) {
-    thread_pool pool{num_threads};
+    thread_pool<BUFFER_SIZE, ALIGNMENT> pool{num_threads};
     if (submit_after_started) {
         pool.start();
     }
@@ -65,7 +68,7 @@ nanoseconds average_submit_time(size_t num_threads, size_t num_submissions,
 nanoseconds average_submit_with_callback_time(size_t num_threads,
                                               size_t num_submissions,
                                               bool submit_after_started) {
-    thread_pool pool{num_threads};
+    thread_pool<BUFFER_SIZE, ALIGNMENT> pool{num_threads};
     if (submit_after_started) {
         pool.start();
     }

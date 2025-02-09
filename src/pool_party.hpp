@@ -1,13 +1,10 @@
 #ifndef POOL_PARTY_HPP
 #define POOL_PARTY_HPP
 
-#include <concepts>
 #include <condition_variable>
-#include <cuchar>
 #include <exception>
 #include <functional>
 #include <future>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -23,10 +20,11 @@ using size_t = std::size_t;
 // This class is needed to store generic callables that are not copyable due to
 // move-only semantics for their captures. The class is a type-erased,
 // movable-only generic callable that takes no arguments and returns void.
-class movable_callable {
+template <size_t BufferSize, size_t Alignment> class movable_callable {
   private:
     struct impl_base {
         virtual void call() = 0;
+        virtual void move(impl_base* address) = 0;
         virtual ~impl_base() = default;
 
         impl_base() = default;
@@ -36,32 +34,72 @@ class movable_callable {
         impl_base& operator=(impl_base&&) = default;
     };
 
-    std::unique_ptr<impl_base> impl_;
-
     template <typename Callable> struct impl_derived : impl_base {
         Callable func_;
         impl_derived(Callable&& func) : func_(std::move(func)) {}
         void call() override { std::invoke(func_); }
+        void move(impl_base* address) override {
+            ::new (address) impl_derived<Callable>(std::move(*this));
+        }
     };
 
+    alignas(Alignment) std::array<std::byte, BufferSize> buffer;
+    bool use_heap = false;
+    impl_base* pimpl_ = nullptr;
+
   public:
-    template <typename Callable>
-    movable_callable(Callable&& function)
-        : impl_(std::make_unique<impl_derived<Callable>>(std::move(function))) {
+    template <typename Callable> movable_callable(Callable&& function) {
+        using Derived = impl_derived<Callable>;
+        if constexpr (sizeof(Derived) <= BufferSize) {
+            // NOLINTNEXTLINE: Allow reinterpret_cast for SBO
+            pimpl_ = reinterpret_cast<impl_base*>(buffer.data());
+            ::new (pimpl_) Derived(std::move(function));
+            use_heap = false;
+        } else {
+            use_heap = true;
+            // NOLINTNEXTLINE: Allow raw new for SBO
+            pimpl_ = new Derived(std::move(function));
+        }
     }
-    ~movable_callable() = default;
+
+    ~movable_callable() {
+        if (!use_heap) {
+            pimpl_->~impl_base();
+        } else {
+            delete pimpl_;
+        }
+        pimpl_ = nullptr;
+    }
     movable_callable() = default;
     movable_callable(const movable_callable&) = delete;
     movable_callable(movable_callable&) = delete;
-    movable_callable(movable_callable&& other) noexcept
-        : impl_(std::move(other.impl_)) {}
+    movable_callable(movable_callable&& other) noexcept {
+        if (!other.use_heap) {
+            // NOLINTNEXTLINE: Allow reinterpret_cast for SBO
+            pimpl_ = reinterpret_cast<impl_base*>(buffer.data());
+            other.pimpl_->move(pimpl_);
+        } else {
+            use_heap = true;
+            std::swap(pimpl_, other.pimpl_);
+        }
+    }
     movable_callable& operator=(movable_callable&& other) noexcept {
-        impl_ = std::move(other.impl_);
+        buffer.swap(other.buffer);
+        std::swap(pimpl_, other.pimpl_);
+        std::swap(use_heap, other.use_heap);
+        if (!use_heap) {
+            // NOLINTNEXTLINE: Allow reinterpret_cast for SBO
+            pimpl_ = reinterpret_cast<impl_base*>(buffer.data());
+        }
+        if (!other.use_heap) {
+            // NOLINTNEXTLINE: Allow reinterpret_cast for SBO
+            other.pimpl_ = reinterpret_cast<impl_base*>(other.buffer.data());
+        }
         return *this;
     }
     movable_callable& operator=(const movable_callable&) = delete;
 
-    void operator()() { impl_->call(); }
+    void operator()() { pimpl_->call(); }
 }; // class movable_callable
 
 template <typename T>
@@ -123,7 +161,9 @@ template <typename T> class simple_thread_safe_queue {
     std::condition_variable_any queue_cv_;
 };
 
-template <move_only_invocable CallableWrapper = movable_callable,
+template <size_t BufferSize = 64UL, size_t Alignment = 8UL,
+          move_only_invocable CallableWrapper =
+              movable_callable<BufferSize, Alignment>,
           thread_pool_queue Container =
               simple_thread_safe_queue<CallableWrapper>>
 class thread_pool {

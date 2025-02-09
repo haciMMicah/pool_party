@@ -28,7 +28,7 @@ target_link_libraries(
 target_compile_options(
     pool_party_tests
     PUBLIC
-    "-W;-Wall;-Werror;-Wpedantic;-Wextra"
+    "-W;-Wall;-Werror;-Wpedantic;-Wextra;-g"
 )
 
 add_executable(

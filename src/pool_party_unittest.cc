@@ -1,8 +1,8 @@
 #include "pool_party.hpp"
 
 #include <exception>
+#include <future>
 #include <gtest/gtest.h>
-#include <stdexcept>
 
 namespace {
 int free_func() { return 42; }
@@ -13,6 +13,54 @@ class ThreadPoolTestWithParam : public testing::TestWithParam<std::size_t> {};
 
 INSTANTIATE_TEST_SUITE_P(ThreadNums, ThreadPoolTestWithParam,
                          testing::Values(1, 2, 4, 8, 16, 32, 64, 128));
+
+TEST(MovableCallableTest, TestUsesSBO) {
+    std::promise<int> promise{};
+    std::future<int> future = promise.get_future();
+    auto lambda = [promise = std::move(promise)]() mutable {
+        promise.set_value(42);
+    };
+    // Add sizeof(void*) to the lambda to account for vptr in the wrapper.
+    pool_party::movable_callable<sizeof(lambda) + sizeof(void*), 8UL> callable(
+        std::move(lambda));
+
+    callable();
+    EXPECT_EQ(future.get(), 42);
+}
+
+TEST(MovableCallableTest, TestUsesHeap) {
+    std::promise<int> promise{};
+    std::future<int> future = promise.get_future();
+    pool_party::movable_callable<0UL, 8UL> callable(
+        [promise = std::move(promise)]() mutable { promise.set_value(42); });
+
+    callable();
+    EXPECT_EQ(future.get(), 42);
+}
+
+TEST(MovableCallableTest, TestUsesHeapAndSBO) {
+    std::promise<int> promise{};
+    std::future<int> future = promise.get_future();
+    auto lambda = [promise = std::move(promise)]() mutable {
+        promise.set_value(42);
+    };
+    // Add sizeof(void*) to the lambda to account for vptr in the wrapper.
+    pool_party::movable_callable<sizeof(lambda) + sizeof(void*), 8UL> callable(
+        std::move(lambda));
+
+    callable();
+    EXPECT_EQ(future.get(), 42);
+
+    int extra_data = 42;
+    std::promise<int> promise2{};
+    std::future<int> future2 = promise2.get_future();
+    callable = [promise2 = std::move(promise2), extra_data]() mutable {
+        promise2.set_value(extra_data);
+    };
+
+    callable();
+    EXPECT_EQ(future2.get(), 42);
+}
 
 TEST(ThreadPoolTest, TestConstructors) {
     pool_party::thread_pool pool1{};
@@ -121,6 +169,35 @@ TEST(ThreadPoolTest, TestSubmitWithCallback) {
         });
     EXPECT_EQ(task_called_fut.get(), true);
     EXPECT_EQ(callback_called_fut.get(), true);
+}
+
+TEST(ThreadPoolTest, TestUsesSBO) {
+    // Test a thread pool that allows 16 bytes of buffer space and 8 bytes
+    // of alignment for SBO.
+    pool_party::thread_pool<16UL, 8UL> pool{};
+    pool.start();
+    std::promise<int> promise{};
+    std::future<int> task_return_value = promise.get_future();
+    pool.submit_detached(
+        [promise = std::move(promise)](int returned_value) mutable {
+            promise.set_value(returned_value);
+        },
+        42);
+    EXPECT_EQ(task_return_value.get(), 42);
+}
+
+TEST(ThreadPoolTest, TestUsesHeap) {
+    // Test a thread pool that always uses the heap.
+    pool_party::thread_pool<0UL> pool{};
+    pool.start();
+    std::promise<int> promise{};
+    std::future<int> task_return_value = promise.get_future();
+    pool.submit_detached(
+        [promise = std::move(promise)](int returned_value) mutable {
+            promise.set_value(returned_value);
+        },
+        42);
+    EXPECT_EQ(task_return_value.get(), 42);
 }
 
 TEST_P(ThreadPoolTestWithParam, TestStart) {

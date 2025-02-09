@@ -1,6 +1,7 @@
 #ifndef POOL_PARTY_HPP
 #define POOL_PARTY_HPP
 
+#include <concepts>
 #include <condition_variable>
 #include <exception>
 #include <functional>
@@ -12,6 +13,8 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+
+#include <iostream>
 
 namespace pool_party {
 
@@ -120,11 +123,24 @@ concept thread_pool_queue =
         } -> std::same_as<std::optional<typename Queue::value_type>>;
         { c_queue.size() } -> std::convertible_to<size_t>;
         { c_queue.empty() } -> std::same_as<bool>;
+        { queue.start() } -> std::same_as<void>;
+        { queue.stop() } -> std::same_as<void>;
     };
 
 template <typename T> class simple_thread_safe_queue {
   public:
     using value_type = T;
+    void stop() {
+        {
+            std::lock_guard lock(queue_lock_);
+            stopping_.store(true);
+        }
+        queue_cv_.notify_all();
+    }
+    void start() {
+        std::lock_guard lock(queue_lock_);
+        stopping_ = false;
+    }
     void push(value_type&& value) {
         std::unique_lock lock(queue_lock_);
         queue_.push(std::forward<value_type>(value));
@@ -132,13 +148,18 @@ template <typename T> class simple_thread_safe_queue {
         queue_cv_.notify_one();
     }
 
-    std::optional<value_type> pop(std::stop_token stoken) {
+    std::optional<value_type> pop(std::stop_token) {
         std::unique_lock lock(queue_lock_);
-        queue_cv_.wait(lock, stoken, [this] { return !queue_.empty(); });
-
-        if (stoken.stop_requested()) {
+        // queue_cv_.wait(lock, stoken, [this] { return !queue_.empty(); });
+        queue_cv_.wait(lock,
+                       [this] { return stopping_.load() || !queue_.empty(); });
+        if (stopping_) {
             return std::nullopt;
         }
+
+        // if (stoken.stop_requested()) {
+        //     return std::nullopt;
+        // }
 
         auto front = std::move(queue_.front());
         queue_.pop();
@@ -158,7 +179,8 @@ template <typename T> class simple_thread_safe_queue {
   private:
     mutable std::mutex queue_lock_;
     std::queue<value_type> queue_;
-    std::condition_variable_any queue_cv_;
+    std::condition_variable queue_cv_;
+    std::atomic<bool> stopping_ = false;
 };
 
 template <size_t BufferSize = 64UL, size_t Alignment = 8UL,
@@ -182,8 +204,8 @@ class thread_pool {
     thread_pool& operator=(thread_pool&&) = delete;
 
     void start() {
-        // Double check lock to avoid needing to lock if the threads are already
-        // running.
+        // Double check lock to avoid needing to lock if the threads are
+        // already running.
         if (is_running_) {
             return;
         }
@@ -194,6 +216,7 @@ class thread_pool {
         }
 
         threads_ = std::vector<std::jthread>(num_threads_);
+        task_queue_.start();
         for (size_t i = 0; i < num_threads_; i++) {
             threads_[i] =
                 std::jthread{std::bind_front(&thread_pool::worker_task, this)};
@@ -202,8 +225,8 @@ class thread_pool {
     }
 
     void stop() {
-        // Double check lock to avoid needing to lock if the threads are already
-        // stopped.
+        // Double check lock to avoid needing to lock if the threads are
+        // already stopped.
         if (!is_running_) {
             return;
         }
@@ -213,8 +236,9 @@ class thread_pool {
             return;
         }
 
+        task_queue_.stop();
         for (auto& thread : threads_) {
-            thread.request_stop();
+            // thread.request_stop();
             thread.join();
         }
         threads_.clear();
@@ -238,7 +262,8 @@ class thread_pool {
                 std::invoke(std::forward<Callable>(task),
                             std::forward<Args>(args)...);
             } catch (...) {
-                // TODO: Maybe call a user set callback to foward the exception.
+                // TODO: Maybe call a user set callback to foward the
+                // exception.
             }
         });
     }
@@ -342,7 +367,6 @@ class thread_pool {
         }
     }
 
-    std::condition_variable_any queue_cv_;
     mutable std::mutex thread_pool_lock_;
     Container task_queue_;
     std::vector<std::jthread> threads_;

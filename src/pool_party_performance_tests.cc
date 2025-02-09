@@ -95,11 +95,12 @@ int main() {
         std::tuple<std::string_view,
                    std::function<nanoseconds(size_t, size_t, bool)>, bool>>
         submit_functions = {
-            {"submit_detached"sv, average_submit_detached_time, true},
+            //{"submit_detached"sv, average_submit_detached_time, true},
             {"submit_detached"sv, average_submit_detached_time, false},
-            {"submit"sv, average_submit_time, true},
+            //{"submit"sv, average_submit_time, true},
             {"submit"sv, average_submit_time, false},
-            {"submit_with_callback"sv, average_submit_with_callback_time, true},
+            //{"submit_with_callback"sv, average_submit_with_callback_time,
+            //true},
             {"submit_with_callback"sv, average_submit_with_callback_time,
              false},
         };

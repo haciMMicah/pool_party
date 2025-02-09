@@ -41,5 +41,20 @@ target_compile_options(
     "-W;-Wall;-Werror;-Wpedantic;-Wextra;-O3"
 )
 
+add_executable(
+    thread_pool_performance_tests
+    src/thread_pool_performance_tests.cc
+)
+target_include_directories(
+    thread_pool_performance_tests
+    PUBLIC
+    include
+)
+target_compile_options(
+    thread_pool_performance_tests
+    PUBLIC
+    "-W;-Wall;-Werror;-Wpedantic;-Wextra;-O3"
+)
+add_compile_definitions(BS_THREAD_POOL_ENABLE_PAUSE=1)
 include(GoogleTest)
 gtest_discover_tests(pool_party_tests)

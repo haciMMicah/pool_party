@@ -114,9 +114,11 @@ concept thread_pool_queue =
     requires { typename Queue::value_type; } &&
     requires(Queue queue, const Queue c_queue,
              typename Queue::value_type&& value) {
+        { queue.start() } -> std::same_as<void>;
+        { queue.stop() } -> std::same_as<void>;
         { queue.push(std::move(value)) } -> std::same_as<void>;
         {
-            queue.pop(std::stop_token())
+            queue.pop()
         } -> std::same_as<std::optional<typename Queue::value_type>>;
         { c_queue.size() } -> std::convertible_to<size_t>;
         { c_queue.empty() } -> std::same_as<bool>;
@@ -125,6 +127,19 @@ concept thread_pool_queue =
 template <typename T> class simple_thread_safe_queue {
   public:
     using value_type = T;
+    void start() {
+
+        std::lock_guard lock(queue_lock_);
+        stopping_.store(false);
+    }
+
+    void stop() {
+        {
+            std::lock_guard lock(queue_lock_);
+            stopping_.store(true);
+        }
+        queue_cv_.notify_all();
+    }
     void push(value_type&& value) {
         std::unique_lock lock(queue_lock_);
         queue_.push(std::forward<value_type>(value));
@@ -132,11 +147,11 @@ template <typename T> class simple_thread_safe_queue {
         queue_cv_.notify_one();
     }
 
-    std::optional<value_type> pop(std::stop_token stoken) {
+    std::optional<value_type> pop() {
         std::unique_lock lock(queue_lock_);
-        queue_cv_.wait(lock, stoken, [this] { return !queue_.empty(); });
-
-        if (stoken.stop_requested()) {
+        queue_cv_.wait(lock,
+                       [this] { return stopping_.load() || !queue_.empty(); });
+        if (stopping_) {
             return std::nullopt;
         }
 
@@ -158,7 +173,8 @@ template <typename T> class simple_thread_safe_queue {
   private:
     mutable std::mutex queue_lock_;
     std::queue<value_type> queue_;
-    std::condition_variable_any queue_cv_;
+    std::condition_variable queue_cv_;
+    std::atomic<bool> stopping_ = false;
 };
 
 template <size_t BufferSize = 64UL, size_t Alignment = 8UL,
@@ -194,9 +210,9 @@ class thread_pool {
         }
 
         threads_ = std::vector<std::jthread>(num_threads_);
+        task_queue_.start();
         for (size_t i = 0; i < num_threads_; i++) {
-            threads_[i] =
-                std::jthread{std::bind_front(&thread_pool::worker_task, this)};
+            threads_[i] = std::jthread{&thread_pool::worker_task, this};
         }
         is_running_ = true;
     }
@@ -213,6 +229,7 @@ class thread_pool {
             return;
         }
 
+        task_queue_.stop();
         for (auto& thread : threads_) {
             thread.request_stop();
             thread.join();
@@ -331,9 +348,9 @@ class thread_pool {
   private:
     // Taking the stop_token by const& is fine here because jthread's
     // constructor returns a temporary by value so it gets copied anyways.
-    void worker_task(const std::stop_token& stoken) {
+    void worker_task() {
         while (true) {
-            auto task = task_queue_.pop(stoken);
+            auto task = task_queue_.pop();
             if (task) {
                 task.value()();
             } else {
